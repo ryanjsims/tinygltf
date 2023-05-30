@@ -1423,6 +1423,10 @@ class TinyGLTF {
   bool WriteGltfSceneToFile(const Model *model, const std::string &filename,
                             bool embedImages, bool embedBuffers,
                             bool prettyPrint, bool writeBinary);
+  
+  bool SerializeGltfSceneToBuffer(const Model *model, unsigned char **bytes, size_t *length, std::string defaultBinFilename,
+                                  bool embedImages, bool embedBuffers,
+                                  bool prettyPrint, bool writeBinary);
 
   ///
   /// Set callback to use for loading image data
@@ -8238,6 +8242,130 @@ bool TinyGLTF::WriteGltfSceneToFile(const Model *model,
   } else {
     return WriteGltfFile(filename, detail::JsonToString(output, (prettyPrint ? 2 : -1)));
   }
+}
+
+bool TinyGLTF::SerializeGltfSceneToBuffer(const Model *model, unsigned char **bytes, size_t *length, std::string defaultBinFilename,
+                                  bool embedImages = false, bool embedBuffers = false,
+                                  bool prettyPrint = true, bool writeBinary = false) {
+  if(bytes == nullptr || length == nullptr) {
+    return false;
+  }
+  *length = 0;
+  detail::JsonDocument output;
+  std::string defaultBinFileExt = ".bin";
+  std::string::size_type pos =
+      defaultBinFilename.rfind('.', defaultBinFilename.length());
+
+  if (pos != std::string::npos) {
+    defaultBinFilename = defaultBinFilename.substr(0, pos);
+  }
+  std::string baseDir = GetBaseDir(defaultBinFilename);
+  if (baseDir.empty()) {
+    baseDir = "./";
+  }
+  /// Serialize all properties except buffers and images.
+  SerializeGltfModel(model, output);
+
+  // BUFFERS
+  std::vector<std::string> usedFilenames;
+  std::vector<unsigned char> binBuffer;
+  if (model->buffers.size()) {
+    detail::json buffers;
+    detail::JsonReserveArray(buffers, model->buffers.size());
+    for (unsigned int i = 0; i < model->buffers.size(); ++i) {
+      detail::json buffer;
+      if (writeBinary && i == 0 && model->buffers[i].uri.empty()) {
+        SerializeGltfBufferBin(model->buffers[i], buffer, binBuffer);
+      } else if (embedBuffers) {
+        SerializeGltfBuffer(model->buffers[i], buffer);
+      } else {
+        std::string binSavePath;
+        std::string binFilename;
+        std::string binUri;
+        if (!model->buffers[i].uri.empty() &&
+            !IsDataURI(model->buffers[i].uri)) {
+          binUri = model->buffers[i].uri;
+          if (!uri_cb.decode(binUri, &binFilename, uri_cb.user_data)) {
+            return false;
+          }
+        } else {
+          binFilename = defaultBinFilename + defaultBinFileExt;
+          bool inUse = true;
+          int numUsed = 0;
+          while (inUse) {
+            inUse = false;
+            for (const std::string &usedName : usedFilenames) {
+              if (binFilename.compare(usedName) != 0) continue;
+              inUse = true;
+              binFilename = defaultBinFilename + std::to_string(numUsed++) +
+                            defaultBinFileExt;
+              break;
+            }
+          }
+
+          if (uri_cb.encode) {
+            if (!uri_cb.encode(binFilename, "buffer", &binUri,
+                               uri_cb.user_data)) {
+              return false;
+            }
+          } else {
+            binUri = binFilename;
+          }
+        }
+        usedFilenames.push_back(binFilename);
+        binSavePath = JoinPath(baseDir, binFilename);
+        if (!SerializeGltfBuffer(model->buffers[i], buffer, binSavePath,
+                                 binUri)) {
+          return false;
+        }
+      }
+      detail::JsonPushBack(buffers, std::move(buffer));
+    }
+    detail::JsonAddMember(output, "buffers", std::move(buffers));
+  }
+
+  // IMAGES
+  if (model->images.size()) {
+    detail::json images;
+    detail::JsonReserveArray(images, model->images.size());
+    for (unsigned int i = 0; i < model->images.size(); ++i) {
+      detail::json image;
+
+      std::string uri;
+      if (!UpdateImageObject(model->images[i], baseDir, int(i), embedImages,
+                             &uri_cb, &this->WriteImageData,
+                             this->write_image_user_data_, &uri)) {
+        return false;
+      }
+      SerializeGltfImage(model->images[i], uri, image);
+      detail::JsonPushBack(images, std::move(image));
+    }
+    detail::JsonAddMember(output, "images", std::move(images));
+  }
+
+  std::stringstream gltf_data;
+  bool result;
+
+  if (writeBinary) {
+    result = WriteBinaryGltfStream(gltf_data, detail::JsonToString(output), binBuffer);
+  } else {
+    result = WriteGltfStream(gltf_data, detail::JsonToString(output, (prettyPrint ? 2 : -1)));
+  }
+
+  if(!result) {
+    return result;
+  }
+  *length = gltf_data.tellg();
+  if(*bytes == nullptr) {
+    *bytes = new unsigned char[*length];
+  }
+  if(*bytes == nullptr) {
+    *length = 0;
+    return false;
+  }
+
+  std::memcpy(*bytes, gltf_data.str().c_str(), *length);
+  return result;
 }
 
 }  // namespace tinygltf
