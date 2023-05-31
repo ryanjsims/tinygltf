@@ -8244,7 +8244,7 @@ bool TinyGLTF::WriteGltfSceneToFile(const Model *model,
   }
 }
 
-bool TinyGLTF::SerializeGltfSceneToBuffer(const Model *model, unsigned char **bytes, size_t *length, std::string defaultBinFilename,
+bool TinyGLTF::SerializeGltfSceneToBuffer(const Model *model, unsigned char **bytes, size_t *length, std::string outputFilename,
                                   bool embedImages = false, bool embedBuffers = false,
                                   bool prettyPrint = true, bool writeBinary = false) {
   if(bytes == nullptr || length == nullptr) {
@@ -8252,6 +8252,7 @@ bool TinyGLTF::SerializeGltfSceneToBuffer(const Model *model, unsigned char **by
   }
   *length = 0;
   detail::JsonDocument output;
+  std::string defaultBinFilename = GetBaseFilename(outputFilename);
   std::string defaultBinFileExt = ".bin";
   std::string::size_type pos =
       defaultBinFilename.rfind('.', defaultBinFilename.length());
@@ -8259,7 +8260,7 @@ bool TinyGLTF::SerializeGltfSceneToBuffer(const Model *model, unsigned char **by
   if (pos != std::string::npos) {
     defaultBinFilename = defaultBinFilename.substr(0, pos);
   }
-  std::string baseDir = GetBaseDir(defaultBinFilename);
+  std::string baseDir = GetBaseDir(outputFilename);
   if (baseDir.empty()) {
     baseDir = "./";
   }
@@ -8355,7 +8356,7 @@ bool TinyGLTF::SerializeGltfSceneToBuffer(const Model *model, unsigned char **by
   if(!result) {
     return result;
   }
-  *length = gltf_data.tellg();
+  *length = gltf_data.tellp();
   if(*bytes == nullptr) {
     *bytes = new unsigned char[*length];
   }
